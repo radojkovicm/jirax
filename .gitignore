@@ -1,0 +1,26 @@
+# Database (contains local user data — never commit real data)
+*.db
+*.db-journal
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+
+# PyInstaller build output
+build/
+dist/
+*.spec.bak
+
+# Editor/OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# Scratch/backup folders
+temp backup/
+temp_backup/

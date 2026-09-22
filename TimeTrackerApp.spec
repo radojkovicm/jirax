@@ -2,10 +2,10 @@
 
 
 a = Analysis(
-    ['jirax_v1.py'],
+    ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('time_tracker.db', '.')],
+    datas=[('time_tracker.ico', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

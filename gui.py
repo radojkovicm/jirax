@@ -1,173 +1,60 @@
-import sqlite3
-from datetime import datetime, timedelta
+"""Tkinter GUI for JiraX Time Tracker."""
 import tkinter as tk
-from tkinter import ttk, messagebox, StringVar
+from tkinter import ttk, messagebox, filedialog
+from datetime import datetime, timedelta
 from tkcalendar import DateEntry
-import pandas as pd
-from tkinter import filedialog
 import locale
 import os
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
-class TimeTracker:
-    def __init__(self):
-    # Inicijalizacija baze podataka
-        self.conn = sqlite3.connect('time_tracker.db')
-        self.conn.execute('PRAGMA encoding="UTF-8"')
-        self.conn.execute('PRAGMA foreign_keys = ON')  # Omogućavanje stranih ključeva
+import export
+
+
+class TimeTrackerApp:
+    """Main application window: task entry, reports, stats and future tasks."""
+
+    def __init__(self, db):
+        self.db = db
         self.prefilling_from_future_task_id = None
 
-        # Kreiranje tabela i inicijalizacija
-        self.create_tables()
-
-        # Inicijalizacija vrednosti za buduće zadatke
         today = datetime.now().date()
         self.future_date_from_value = today
         self.future_date_to_value = today + timedelta(days=30)
 
-        # Postavljanje GUI-a
         self.setup_gui()
 
-        # Učitavanje predložaka i nedavnih zadataka
         self.task_templates = self.load_templates()
         self.recent_tasks = set()
         self.recent_users = set()
 
-        # Statistički podaci
         self.total_hours_today = 0
         self.total_hours_week = 0
         self.total_hours_month = 0
-    def create_tables(self):
-        cursor = self.conn.cursor()
-        
-        # Tabela kategorija
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS categories (
-            id INTEGER PRIMARY KEY,
-            name TEXT NOT NULL UNIQUE
-        )''')
-        
-        # Tabela korisnika (nova)
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY,
-            name TEXT NOT NULL UNIQUE
-        )''')
-
-        # Tabela zadataka sa dodatim poljem user_id
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS tasks (
-            id INTEGER PRIMARY KEY,
-            date TEXT NOT NULL,
-            user_id INTEGER,
-            category_id INTEGER,
-            task_name TEXT NOT NULL,
-            description TEXT,
-            hours_spent REAL NOT NULL,
-            start_time TEXT,
-            end_time TEXT,
-            priority TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (category_id) REFERENCES categories (id),
-            FOREIGN KEY (user_id) REFERENCES users (id)
-        )''')
-
-        # Tabela predložaka sa dodatim poljem user_id
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS templates (
-            id INTEGER PRIMARY KEY,
-            task_name TEXT NOT NULL,
-            user_id INTEGER,
-            category_id INTEGER,
-            description TEXT,
-            FOREIGN KEY (category_id) REFERENCES categories (id),
-            FOREIGN KEY (user_id) REFERENCES users (id)
-        )''')
-
-        # Kreiranje indeksa za poboljšanje performansi
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_tasks_date ON tasks(date)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_tasks_user ON tasks(user_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_tasks_category ON tasks(category_id)')
-        
-        # Kreiranje tabele budućih zadataka
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS future_tasks (
-            id INTEGER PRIMARY KEY,
-            date TEXT NOT NULL,
-            user_id INTEGER,
-            category_id INTEGER,
-            task_name TEXT NOT NULL,
-            description TEXT,
-            priority TEXT,
-            completed INTEGER DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (category_id) REFERENCES categories (id),
-            FOREIGN KEY (user_id) REFERENCES users (id)
-        )''')
-
-        # Kreiranje indeksa
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_future_tasks_date ON future_tasks(date)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_future_tasks_completed ON future_tasks(completed)')
-
-        # Podrazumevane kategorije
-        categories = [
-            'Business Central', 'Pantheon', 'iWare', 'SQL',
-            'Laptops', 'Hardware', 'Meeting', 'Other'
-        ]
-
-        # Podrazumevani korisnici (dodajte svoje)
-        users = [
-            'Sendina H.', 'Sajra S.', 'Ana J.', 'Tonja K.', 'Diana J.', 'Dušan R.'
-        ]
-
-        try:
-            # Dodavanje kategorija
-            for category in categories:
-                cursor.execute("INSERT OR IGNORE INTO categories (name) VALUES (?)", (category,))
-            
-            # Dodavanje korisnika
-            for user in users:
-                cursor.execute("INSERT OR IGNORE INTO users (name) VALUES (?)", (user,))
-                
-            self.conn.commit()
-        except sqlite3.IntegrityError:
-            pass
-
-    # ... unutar klase TimeTracker ...
 
     def setup_gui(self):
-        # Osnovna konfiguracija prozora
         self.root = tk.Tk()
         self.root.title("Time Tracker")
         self.root.geometry("900x700")
         self.root.minsize(800, 600)
 
-        # Postavljanje ikone ako postoji
         try:
-            self.root.iconbitmap("time_tracker.ico") # Promenite putanju ako je potrebno
-        except tk.TclError: # Bolje je uhvatiti specifičnu grešku
-            print("Ikona 'time_tracker.ico' nije pronađena ili je neispravna.")
-        except Exception as e_icon:
-            print(f"Neočekivana greška pri postavljanju ikone: {e_icon}")
+            self.root.iconbitmap("time_tracker.ico")
+        except tk.TclError:
+            print("Ikona 'time_tracker.ico' nije pronadjena ili je neispravna.")
 
-
-        # Glavni notebook za kartice
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(fill='both', expand=True, padx=5, pady=5)
 
-        # Kreiranje kartica (frame-ova za svaki tab)
         self.task_frame = ttk.Frame(self.notebook)
         self.report_frame = ttk.Frame(self.notebook)
         self.stats_frame = ttk.Frame(self.notebook)
-        self.future_tasks_frame = ttk.Frame(self.notebook) # Preimenovano iz future_frame radi jasnoće
+        self.future_tasks_frame = ttk.Frame(self.notebook)
 
         self.notebook.add(self.task_frame, text='Unos zadatka')
-        self.notebook.add(self.report_frame, text='Reports') # Tekst taba je 'Reports'
+        self.notebook.add(self.report_frame, text='Reports')
         self.notebook.add(self.stats_frame, text='Stats')
         self.notebook.add(self.future_tasks_frame, text="Budući zadaci")
+        self.notebook.bind("<<NotebookTabChanged>>", self.on_tab_changed)
 
-        # Postavljanje statusne trake
-        # ... (status bar code) ...
         self.status_bar = ttk.Frame(self.root, relief=tk.SUNKEN, borderwidth=1)
         self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
 
@@ -179,22 +66,13 @@ class TimeTracker:
         self.hours_label = ttk.Label(self.status_bar, textvariable=self.hours_text, anchor=tk.E, padding=(5, 2))
         self.hours_label.pack(side=tk.RIGHT)
 
-        # Povezivanje događaja promene taba
-        self.notebook.bind("<<NotebookTabChanged>>", self.on_tab_changed) # Proverite da nema grešaka u kucanju
-
-        # Inicijalizacija sadržaja svakog taba
         self.setup_task_entry()
         self.setup_report_tab()
         self.setup_stats_tab()
-        self.setup_future_tasks_tab(self.future_tasks_frame) # Prosleđujemo pravi frame
+        self.setup_future_tasks_tab(self.future_tasks_frame)
 
-        # Povezivanje događaja promene taba
-        self.notebook.bind("<<NotebookTabChanged>>", self.on_tab_changed) # <<< DODAJTE OVU LINIJU
-
-        # Postavljanje početnih vrednosti
         self.update_status_bar()
 
-    # Nova metoda za obradu promene taba
     def on_tab_changed(self, event):
         """Poziva se kada korisnik promeni aktivni tab."""
         try:
@@ -204,11 +82,9 @@ class TimeTracker:
                 # print("Debug: Reports tab je selektovan, pozivam refresh_report.")
                 self.refresh_report()
             elif selected_tab_widget == self.future_tasks_frame:
-                # print("Debug: Future tasks tab je selektovan, pozivam refresh_future_tasks.")
                 self.refresh_future_tasks()
             elif selected_tab_widget == self.stats_frame:
-                # print("Debug: Stats tab je selektovan, pozivam refresh_stats.")
-                self.refresh_stats() # Ako imate refresh_stats metodu
+                self.show_statistics()
             # Za task_frame obično nije potrebno automatsko osvežavanje pri selekciji
         except tk.TclError:
             # Ovo se može desiti ako se notebook još uvek inicijalizuje
@@ -223,7 +99,7 @@ class TimeTracker:
         week_start = today - timedelta(days=today.weekday())
         month_start = today.replace(day=1)
         
-        cursor = self.conn.cursor()
+        cursor = self.db.conn.cursor()
         
         # Sati za danas
         cursor.execute("""
@@ -255,12 +131,12 @@ class TimeTracker:
         self.hours_text.set(f"Danas: {today_hours:.2f}h | Nedelja: {week_hours:.2f}h | Mesec: {month_hours:.2f}h")
 
     def get_categories(self):
-        cursor = self.conn.cursor()
+        cursor = self.db.conn.cursor()
         cursor.execute("SELECT name FROM categories ORDER BY name")
         return [row[0] for row in cursor.fetchall()]
 
     def get_users(self):
-        cursor = self.conn.cursor()
+        cursor = self.db.conn.cursor()
         cursor.execute("SELECT name FROM users ORDER BY name")
         return [row[0] for row in cursor.fetchall()]
 
@@ -592,6 +468,7 @@ class TimeTracker:
         
         self.user_tree.pack(fill="both", expand=True)
         
+
     def setup_future_tasks_tab(self, parent_frame):
         # Glavni okvir za buduće zadatke unutar parent_frame (koji je future_frame)
         main_future_frame = ttk.Frame(parent_frame, padding=10)
@@ -688,108 +565,6 @@ class TimeTracker:
         # Stilovi za redove (opciono, ako želite različite boje za parne/neparne redove)
         self.future_tree.tag_configure('oddrow', background='#f0f0f0')
         self.future_tree.tag_configure('evenrow', background='white')
-    def setup_gui(self):
-        # Osnovna konfiguracija prozora
-        self.root = tk.Tk()
-        self.root.title("Time Tracker")
-        self.root.geometry("900x700")
-        self.root.minsize(800, 600)
-
-        # Postavljanje ikone ako postoji
-        try:
-            self.root.iconbitmap("time_tracker.ico")
-        except:
-            pass
-
-        # Glavni notebook za kartice
-        self.notebook = ttk.Notebook(self.root)
-        self.notebook.pack(fill='both', expand=True, padx=5, pady=5)
-
-        # Kreiranje kartica
-        self.task_frame = ttk.Frame(self.notebook)
-        self.report_frame = ttk.Frame(self.notebook)
-        self.stats_frame = ttk.Frame(self.notebook)
-        future_frame = ttk.Frame(self.notebook) # Uklonjen padding=10 odavde, jer ga ima main_future_frame
-
-
-        self.notebook.add(self.task_frame, text='Unos zadatka')
-        self.notebook.add(self.report_frame, text='Reports')
-        self.notebook.add(self.stats_frame, text='Stats')
-        self.notebook.add(future_frame, text="Budući zadaci")
-
-        # Postavljanje statusne trake
-        self.status_bar = ttk.Frame(self.root, relief=tk.SUNKEN, borderwidth=1)
-        self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
-
-        self.status_text = tk.StringVar()
-        self.status_label = ttk.Label(self.status_bar, textvariable=self.status_text, anchor=tk.W, padding=(5, 2))
-        self.status_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
-
-        self.hours_text = tk.StringVar()
-        self.hours_label = ttk.Label(self.status_bar, textvariable=self.hours_text, anchor=tk.E, padding=(5, 2))
-        self.hours_label.pack(side=tk.RIGHT)
-
-        # Inicijalizacija kartica
-        self.setup_task_entry()
-        self.setup_report_tab()
-        self.setup_stats_tab()
-        self.setup_future_tasks_tab(future_frame) # <<< DODAJTE OVAJ POZIV
-
-        # Postavljanje početnih vrednosti
-        self.update_status_bar()
-    
-    def setup_report_treeview(self, parent_frame):
-        tree_frame = ttk.Frame(parent_frame)
-        tree_frame.pack(fill="both", expand=True)
-
-        # Kreiranje tabele sa kolonama
-        self.tree = ttk.Treeview(tree_frame, columns=("#", "Date", "User", "Task", "Category", "Hours",
-                                                    "Start", "End", "Priority", "Actions"),
-                                show="headings")
-
-        self.tree.heading("#", text="#")
-        self.tree.heading("Date", text="Datum")
-        self.tree.heading("User", text="Korisnik")  # Nova kolona
-        self.tree.heading("Task", text="Zadatak")
-        self.tree.heading("Category", text="Kategorija")
-        self.tree.heading("Hours", text="Sati")
-        self.tree.heading("Start", text="Početak")
-        self.tree.heading("End", text="Kraj")
-        self.tree.heading("Priority", text="Prioritet")
-        self.tree.heading("Actions", text="Akcije")
-
-        self.tree.column("#", width=40)
-        self.tree.column("Date", width=100)
-        self.tree.column("User", width=100)  # Nova kolona
-        self.tree.column("Task", width=200)
-        self.tree.column("Category", width=120)
-        self.tree.column("Hours", width=70)
-        self.tree.column("Start", width=80)
-        self.tree.column("End", width=80)
-        self.tree.column("Priority", width=70)
-        self.tree.column("Actions", width=100)
-
-        # Definisanje stilova za redove
-        self.tree.tag_configure('oddrow', background='#f0f0f0')
-        self.tree.tag_configure('evenrow', background='white')
-        self.tree.tag_configure('total', background='lightblue', font=('', 9, 'bold'))
-        self.tree.tag_configure('separator', background='#e0e0e0')
-
-        # Dodavanje klizača
-        vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
-        hsb = ttk.Scrollbar(tree_frame, orient="horizontal", command=self.tree.xview)
-        self.tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
-
-        self.tree.grid(row=0, column=0, sticky="nsew")
-        vsb.grid(row=0, column=1, sticky="ns")
-        hsb.grid(row=1, column=0, sticky="ew")
-
-        tree_frame.grid_columnconfigure(0, weight=1)
-        tree_frame.grid_rowconfigure(0, weight=1)
-
-        # Povezivanje događaja
-        self.tree.bind("<Double-1>", self.show_task_details)
-        self.tree.bind("<Button-3>", self.show_edit_menu)
 
     def update_user_suggestions(self, event=None):
         if event and event.keysym in ('Down', 'Up', 'Return', 'Tab'):
@@ -801,7 +576,7 @@ class TimeTracker:
             self.user_entry['values'] = self.get_users()
             return
         
-        cursor = self.conn.cursor()
+        cursor = self.db.conn.cursor()
         cursor.execute("""
             SELECT name FROM users 
             WHERE LOWER(name) LIKE ? 
@@ -828,7 +603,7 @@ class TimeTracker:
         if not current_text:
             return
         
-        cursor = self.conn.cursor()
+        cursor = self.db.conn.cursor()
         
         # Dobijanje predloga iz zadataka
         cursor.execute("""
@@ -914,7 +689,7 @@ class TimeTracker:
         selected_date_str = self.date_entry.get_date().strftime('%Y-%m-%d')
         # selected_user_name = self.user_entry.get() # Razmisliti da li treba filtrirati po korisniku
 
-        cursor = self.conn.cursor()
+        cursor = self.db.conn.cursor()
 
         # Pronađi poslednje end_time za izabrani datum
         # Možete dodati i user_id u WHERE klauzulu ako želite da bude specifično za korisnika
@@ -959,6 +734,7 @@ class TimeTracker:
         self.priority_combo.set('Srednji')
         # Ne čistimo datum i korisnika jer su to često iste vrednosti
         
+
     def toggle_completed_checkbox(self):
         if self.future_task_var.get():
             self.completed_check.pack()  # Prikazujemo checkbox za završen
@@ -980,7 +756,7 @@ class TimeTracker:
         """Priprema budući zadatak za unos u tab 'Unos zadatka'."""
         try:
             future_task_id = int(future_task_id_str)
-            cursor = self.conn.cursor()
+            cursor = self.db.conn.cursor()
             cursor.execute("""
                 SELECT ft.date, u.name as user_name, ft.task_name, c.name as category_name,
                     ft.description, ft.priority
@@ -1037,6 +813,7 @@ class TimeTracker:
             messagebox.showerror("Greška", f"Greška pri pripremi zadatka za unos: {str(e)}")
             print(f"Error preparing future task for entry: {str(e)}")
         
+
     def save_task(self):
         """Čuvanje novog zadatka u bazi podataka"""
         try:
@@ -1088,7 +865,7 @@ class TimeTracker:
                 end_time_str = self.end_time.get()
             # else: Za budući zadatak, sati i vreme nisu potrebni
 
-            cursor = self.conn.cursor()
+            cursor = self.db.conn.cursor()
             # ... (logika za dobijanje/dodavanje category_id i user_id - ostaje ista) ...
             # Provera i dodavanje kategorije ako ne postoji
             if category:
@@ -1096,7 +873,7 @@ class TimeTracker:
                 category_result = cursor.fetchone()
                 if not category_result:
                     cursor.execute("INSERT INTO categories (name) VALUES (?)", (category,))
-                    self.conn.commit()
+                    self.db.conn.commit()
                     category_id = cursor.lastrowid
                 else:
                     category_id = category_result[0]
@@ -1110,7 +887,7 @@ class TimeTracker:
                 user_result = cursor.fetchone()
                 if not user_result:
                     cursor.execute("INSERT INTO users (name) VALUES (?)", (user,))
-                    self.conn.commit()
+                    self.db.conn.commit()
                     user_id = cursor.lastrowid
                 else:
                     user_id = user_result[0]
@@ -1128,7 +905,7 @@ class TimeTracker:
                     date_str, user_id, category_id, task_name, description, priority_val,
                     1 if self.completed_var.get() else 0
                 ))
-                self.conn.commit()
+                self.db.conn.commit()
                 messagebox.showinfo("Uspeh", "Budući zadatak uspešno sačuvan!")
                 self.refresh_future_tasks()
             else: # Ako NIJE označen checkbox "Budući zadatak" -> čuvamo kao AKTIVNI zadatak
@@ -1140,7 +917,7 @@ class TimeTracker:
                     date_str, user_id, category_id, task_name, description,
                     hours, start_time_str, end_time_str, priority_val
                 ))
-                self.conn.commit()
+                self.db.conn.commit()
                 messagebox.showinfo("Uspeh", "Aktivni zadatak uspešno sačuvan!")
 
                 # Ako je ovaj aktivni zadatak rezultat prebacivanja iz budućih zadataka,
@@ -1148,7 +925,7 @@ class TimeTracker:
                 if self.prefilling_from_future_task_id is not None:
                     try:
                         cursor.execute("DELETE FROM future_tasks WHERE id = ?", (self.prefilling_from_future_task_id,))
-                        self.conn.commit()
+                        self.db.conn.commit()
                         print(f"Debug: Obrisao budući zadatak sa ID: {self.prefilling_from_future_task_id}")
                         self.prefilling_from_future_task_id = None # Resetuj ID
                         self.refresh_future_tasks() # Osveži listu budućih zadataka
@@ -1251,9 +1028,10 @@ class TimeTracker:
             self.user_entry.set(current_task_user)
         else: self.user_entry.set('') # Ili ostavi prazno
     
+
     def load_templates(self):
         """Učitavanje svih predložaka iz baze"""
-        cursor = self.conn.cursor()
+        cursor = self.db.conn.cursor()
         cursor.execute("""
             SELECT templates.task_name, users.name, categories.name, templates.description 
             FROM templates 
@@ -1274,7 +1052,7 @@ class TimeTracker:
             return
 
         try:
-            cursor = self.conn.cursor()
+            cursor = self.db.conn.cursor()
             
             # Dobijanje ID-a kategorije
             cursor.execute("SELECT id FROM categories WHERE name = ?", (category,))
@@ -1292,7 +1070,7 @@ class TimeTracker:
                 if not user_result:
                     # Ako korisnik ne postoji, dodajemo ga
                     cursor.execute("INSERT INTO users (name) VALUES (?)", (user,))
-                    self.conn.commit()
+                    self.db.conn.commit()
                     user_id = cursor.lastrowid
                 else:
                     user_id = user_result[0]
@@ -1320,7 +1098,7 @@ class TimeTracker:
                     VALUES (?, ?, ?, ?)
                 """, (task_name, user_id, category_id, description))
 
-            self.conn.commit()
+            self.db.conn.commit()
             self.task_templates = self.load_templates()
             self._update_filter_comboboxes() # <<< DODAJTE OVAJ RED
             messagebox.showinfo("Uspeh", "Predložak uspešno sačuvan!")
@@ -1461,7 +1239,7 @@ class TimeTracker:
             task_name, user_name, category_name = selected
             
             try:
-                cursor = self.conn.cursor()
+                cursor = self.db.conn.cursor()
                 
                 # Dobijanje ID-a kategorije
                 cursor.execute("SELECT id FROM categories WHERE name = ?", (category_name,))
@@ -1482,7 +1260,7 @@ class TimeTracker:
                           (user_id = ? OR (user_id IS NULL AND ? IS NULL))
                 """, (task_name, category_id, user_id, user_id))
                 
-                self.conn.commit()
+                self.db.conn.commit()
                 self.task_templates = self.load_templates()
                 
                 populate_templates(search_var.get())
@@ -1507,7 +1285,7 @@ class TimeTracker:
 
     def copy_last_task(self):
         """Kopiranje poslednjeg unetog zadatka"""
-        cursor = self.conn.cursor()
+        cursor = self.db.conn.cursor()
         cursor.execute("""
             SELECT tasks.task_name, users.name, categories.name, tasks.description, 
                    tasks.start_time, tasks.end_time, tasks.priority
@@ -1569,7 +1347,7 @@ class TimeTracker:
         query += " ORDER BY tasks.date DESC, tasks.start_time DESC"
 
         # Izvršavanje upita
-        cursor = self.conn.cursor()
+        cursor = self.db.conn.cursor()
         cursor.execute(query, params)
         fetched_rows = cursor.fetchall() # Pribavi sve redove odjednom
 
@@ -1676,9 +1454,9 @@ class TimeTracker:
         """Brisanje zadatka iz baze"""
         if messagebox.askyesno("Potvrda brisanja", "Da li ste sigurni da želite da obrišete ovaj zadatak?"):
             try:
-                cursor = self.conn.cursor()
+                cursor = self.db.conn.cursor()
                 cursor.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
-                self.conn.commit()
+                self.db.conn.commit()
                 self.refresh_report()
                 self.update_status_bar()
                 messagebox.showinfo("Uspeh", "Zadatak uspešno obrisan!")
@@ -1728,6 +1506,7 @@ class TimeTracker:
         self.tree.selection_set(item_id)
         self.show_task_details(event=None) # Pozovi originalnu metodu, koja će koristiti self.tree.selection()
     
+
     def edit_task(self, item, task_id):
         """Otvaranje prozora za izmenu zadatka"""
         task_values = self.tree.item(item)['values']
@@ -1859,7 +1638,7 @@ class TimeTracker:
                     messagebox.showerror("Greška", "Unesite ispravan broj sati")
                     return
 
-                cursor = self.conn.cursor()
+                cursor = self.db.conn.cursor()
 
                 # Dobijanje ID-a kategorije
                 cursor.execute("SELECT id FROM categories WHERE name = ?", (category_combo.get(),))
@@ -1873,7 +1652,7 @@ class TimeTracker:
                 if not user_result:
                     # Ako korisnik ne postoji, dodajemo ga
                     cursor.execute("INSERT INTO users (name) VALUES (?)", (user_name,))
-                    self.conn.commit()
+                    self.db.conn.commit()
                     user_id = cursor.lastrowid
                 else:
                     user_id = user_result[0]
@@ -1896,7 +1675,7 @@ class TimeTracker:
                     priority_combo.get(),
                     task_id
                 ))
-                self.conn.commit()
+                self.db.conn.commit()
 
                 # Ažuriranje izveštaja i statusne trake
                 self.refresh_report()
@@ -2023,7 +1802,7 @@ class TimeTracker:
         date_to = self.stats_date_to.get_date()
 
         # Statistika po kategorijama
-        cursor = self.conn.cursor()
+        cursor = self.db.conn.cursor()
         cursor.execute("""
             SELECT categories.name, SUM(tasks.hours_spent) as total_hours
             FROM tasks
@@ -2070,202 +1849,28 @@ class TimeTracker:
         self.user_tree.insert("", tk.END, values=("UKUPNO", f"{total_hours:.2f}", "100.0%"),
                             tags=('total',))
 
-    def export_statistics(self):
-        """Izvoz statistike u Excel"""
-        try:
-            file_path = filedialog.asksaveasfilename(
-                defaultextension=".xlsx",
-                filetypes=[("Excel fajlovi", "*.xlsx"), ("Svi fajlovi", "*.*")]
-            )
-
-            if not file_path:
-                return
-
-            # Dobijanje vrednosti filtera
-            date_from = self.stats_date_from.get_date()
-            date_to = self.stats_date_to.get_date()
-
-            # Kreiranje DataFrame-ova za statistiku
-            cursor = self.conn.cursor()
-
-            # Statistika po kategorijama
-            cursor.execute("""
-                SELECT categories.name, SUM(tasks.hours_spent) as total_hours
-                FROM tasks
-                JOIN categories ON tasks.category_id = categories.id
-                WHERE tasks.date BETWEEN ? AND ?
-                GROUP BY categories.name
-                ORDER BY total_hours DESC
-            """, (date_from.strftime('%Y-%m-%d'), date_to.strftime('%Y-%m-%d')))
-
-            category_stats = cursor.fetchall()
-            total_hours = sum(row[1] for row in category_stats)
-
-            cat_data = []
-            for category, hours in category_stats:
-                percentage = (hours / total_hours * 100) if total_hours > 0 else 0
-                cat_data.append([category, hours, percentage])
-
-            cat_df = pd.DataFrame(cat_data, columns=["Kategorija", "Sati", "Procenat"])
-
-            # Statistika po korisnicima
-            cursor.execute("""
-                SELECT users.name, SUM(tasks.hours_spent) as total_hours
-                FROM tasks
-                LEFT JOIN users ON tasks.user_id = users.id
-                WHERE tasks.date BETWEEN ? AND ?
-                GROUP BY users.name
-                ORDER BY total_hours DESC
-            """, (date_from.strftime('%Y-%m-%d'), date_to.strftime('%Y-%m-%d')))
-
-            user_stats = cursor.fetchall()
-
-            user_data = []
-            for user, hours in user_stats:
-                percentage = (hours / total_hours * 100) if total_hours > 0 else 0
-                user_data.append([user or "Nepoznat", hours, percentage])
-
-            user_df = pd.DataFrame(user_data, columns=["Korisnik", "Sati", "Procenat"])
-
-            # Detaljna statistika po danima
-            cursor.execute("""
-                SELECT tasks.date, categories.name, users.name, SUM(tasks.hours_spent) as total_hours
-                FROM tasks
-                JOIN categories ON tasks.category_id = categories.id
-                LEFT JOIN users ON tasks.user_id = users.id
-                WHERE tasks.date BETWEEN ? AND ?
-                GROUP BY tasks.date, categories.name, users.name
-                ORDER BY tasks.date DESC, total_hours DESC
-            """, (date_from.strftime('%Y-%m-%d'), date_to.strftime('%Y-%m-%d')))
-
-            daily_stats = cursor.fetchall()
-
-            daily_data = []
-            for date, category, user, hours in daily_stats:
-                daily_data.append([date, category, user or "Nepoznat", hours])
-
-            daily_df = pd.DataFrame(daily_data, columns=["Datum", "Kategorija", "Korisnik", "Sati"])
-
-            # Kreiranje Excel fajla
-            with pd.ExcelWriter(file_path, engine='openpyxl') as writer:
-                # List sa statistikom po kategorijama
-                cat_df.to_excel(writer, index=False, sheet_name='Po kategorijama')
-
-                # List sa statistikom po korisnicima
-                user_df.to_excel(writer, index=False, sheet_name='Po korisnicima')
-
-                # List sa dnevnom statistikom
-                daily_df.to_excel(writer, index=False, sheet_name='Dnevna statistika')
-
-                # List sa detaljnim podacima
-                cursor.execute("""
-                    SELECT tasks.date, users.name, categories.name, tasks.task_name,
-                           tasks.hours_spent, tasks.start_time, tasks.end_time, tasks.priority,
-                           tasks.description
-                    FROM tasks
-                    JOIN categories ON tasks.category_id = categories.id
-                    LEFT JOIN users ON tasks.user_id = users.id
-                    WHERE tasks.date BETWEEN ? AND ?
-                    ORDER BY tasks.date DESC, tasks.start_time DESC
-                """, (date_from.strftime('%Y-%m-%d'), date_to.strftime('%Y-%m-%d')))
-
-                details = cursor.fetchall()
-
-                details_data = []
-                for row in details:
-                    details_data.append(list(row))
-
-                details_df = pd.DataFrame(details_data, columns=["Datum", "Korisnik", "Kategorija",
-                                                              "Zadatak", "Sati", "Početak", "Kraj",
-                                                              "Prioritet", "Opis"])
-
-                details_df.to_excel(writer, index=False, sheet_name='Detalji')
-
-                # Formatiranje
-                workbook = writer.book
-
-                # Formatiranje lista po kategorijama
-                worksheet = writer.sheets['Po kategorijama']
-                self._format_excel_sheet(worksheet, cat_df, workbook)
-
-                # Formatiranje lista po korisnicima
-                worksheet = writer.sheets['Po korisnicima']
-                self._format_excel_sheet(worksheet, user_df, workbook)
-
-                # Formatiranje dnevne statistike
-                worksheet = writer.sheets['Dnevna statistika']
-                self._format_excel_sheet(worksheet, daily_df, workbook)
-
-                # Formatiranje detalja
-                worksheet = writer.sheets['Detalji']
-                self._format_excel_sheet(worksheet, details_df, workbook)
-
-            messagebox.showinfo("Uspeh", "Statistika uspešno izvezena!")
-
-        except Exception as e:
-            messagebox.showerror("Greška", f"Greška pri izvozu statistike: {str(e)}")
-            # Logovanje greške
-            print(f"Error exporting statistics: {str(e)}")
-
-    def _format_excel_sheet(self, worksheet, df, workbook):
-        """Formatiranje Excel lista"""
-        # Stilovi
-        header_font = Font(bold=True, size=12)
-        header_fill = PatternFill(start_color="CCCCCC", end_color="CCCCCC", fill_type="solid")
-        header_alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
-
-        # Formatiranje zaglavlja
-        for col_num, column in enumerate(df.columns, 1):
-            cell = worksheet.cell(row=1, column=col_num)
-            cell.font = header_font
-            cell.fill = header_fill
-            cell.alignment = header_alignment
-
-        # Podešavanje širine kolona
-        for idx, col in enumerate(df.columns):
-            max_length = max(df[col].astype(str).apply(len).max(), len(col))
-            worksheet.column_dimensions[chr(65 + idx)].width = max_length + 2
-
-    # ... unutar klase TimeTracker ...
-
     def export_to_excel(self):
-        """Izvoz izveštaja u Excel"""
+        """Izvoz izvestaja (tab Reports) u Excel."""
         try:
             file_path = filedialog.asksaveasfilename(
                 defaultextension=".xlsx",
                 filetypes=[("Excel fajlovi", "*.xlsx"), ("Svi fajlovi", "*.*")]
             )
-
             if not file_path:
                 return
 
-            # Prikupljanje podataka iz tabele - SAMO REDOVI SA ZADACIMA
             data = []
             for item_id in self.tree.get_children():
                 item = self.tree.item(item_id)
                 values = item["values"]
                 tags = item["tags"]
 
-                # Preskoči redove koji su totali, separatori ili nemaju validan ID zadatka kao tag
                 if 'total' in tags or 'separator' in tags or not values:
                     continue
-
-                # Proveravamo da li je prvi tag (koji bi trebao biti ID zadatka) broj
-                # Ovo je dodatna provera, jer redovi sa zadacima imaju ID kao tag
-                # Redovi koje smo dodali za "DNEVNO UKUPNO" itd. nemaju ID zadatka kao tag
-                # Originalno je bilo if values and "UKUPNO" not in str(values[2]):
-                # Sada proveravamo da li je red zaista red sa podacima o zadatku
-                # Na osnovu strukture tagova: tags=(tag_boje, str(task_id), description)
-                if len(tags) > 1 and str(tags[1]).isdigit(): # tags[1] bi trebao biti task_id
-                    # Isključujemo prvu kolonu (redni broj) i poslednju ("Akcije")
-                    # Uzimamo: Datum, Korisnik, Zadatak, Kategorija, Sati, Početak, Kraj, Prioritet
-                    # values[0] je redni broj, values[1] je Datum, ..., values[5] su Sati, ..., values[8] je Prioritet
-                    # values[9] je "Akcije"
-                    task_data_row = list(values[1:9]) # Uzima elemente od indeksa 1 do 8
-
-                    # Osiguraj da su sati (values[5]) validan broj, ako ne, postavi na 0.0
+                if len(tags) > 1 and str(tags[1]).isdigit():
+                    task_data_row = list(values[1:9])
                     try:
-                        hours_value = float(task_data_row[4]) # Sati su na indeksu 4 u task_data_row (originalno values[5])
+                        hours_value = float(task_data_row[4])
                     except (ValueError, TypeError):
                         hours_value = 0.0
                     task_data_row[4] = hours_value
@@ -2275,128 +1880,78 @@ class TimeTracker:
                 messagebox.showinfo("Info", "Nema podataka za izvoz.")
                 return
 
-            # Kreiranje DataFrame-a
-            df = pd.DataFrame(data, columns=["Datum", "Korisnik", "Zadatak", "Kategorija",
-                                        "Sati", "Početak", "Kraj", "Prioritet"])
-
-            # Kreiranje Excel fajla
-            with pd.ExcelWriter(file_path, engine='openpyxl') as writer:
-                df.to_excel(writer, index=False, sheet_name='Zadaci')
-
-                # Dobijanje radnog lista
-                worksheet = writer.sheets['Zadaci']
-
-                # Formatiranje
-                header_font = Font(bold=True, size=12)
-                header_fill = PatternFill(start_color="CCCCCC", end_color="CCCCCC", fill_type="solid")
-                header_alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
-
-                for col_num, column_title in enumerate(df.columns, 1):
-                    cell = worksheet.cell(row=1, column=col_num)
-                    cell.value = column_title # Osiguraj da se naslov kolone upiše
-                    cell.font = header_font
-                    cell.fill = header_fill
-                    cell.alignment = header_alignment
-
-                for idx, col in enumerate(df.columns):
-                    # Izračunavanje maksimalne dužine vrednosti u koloni, uključujući i naslov
-                    max_length = 0
-                    column_letter = chr(65 + idx)
-                    if not df.empty and col in df.columns: # Provera da li kolona postoji i da li df nije prazan
-                        max_length = max(df[col].astype(str).apply(len).max(), len(col))
-                    else:
-                        max_length = len(col) # Ako je df prazan, koristi samo dužinu naslova
-                    worksheet.column_dimensions[column_letter].width = max_length + 2
-
-
-                # Dodavanje ukupnih sati
-                # Kolona "Sati" je već float zbog prethodne konverzije
-                total_hours = df["Sati"].sum() if "Sati" in df.columns and not df.empty else 0.0
-
-
-                # Dodavanje praznog reda
-                empty_row_idx = worksheet.max_row + 2 # Dodajemo malo više razmaka
-                # worksheet.cell(row=empty_row_idx, column=1, value="") # Ne treba eksplicitno prazan red
-
-                # Dodavanje ukupnih sati
-                total_row_idx = empty_row_idx # Postavljamo ukupno odmah ispod podataka
-                worksheet.cell(row=total_row_idx, column=1, value="UKUPNO")
-                worksheet.cell(row=total_row_idx, column=1).font = Font(bold=True)
-                worksheet.cell(row=total_row_idx, column=1).fill = PatternFill(start_color="E6F2FF", end_color="E6F2FF", fill_type="solid")
-
-                # Pronalaženje kolone "Sati" za upis ukupne vrednosti
-                hours_column_index = -1
-                for i, col_name in enumerate(df.columns):
-                    if col_name == "Sati":
-                        hours_column_index = i + 1 # +1 jer Excel kolone počinju od 1
-                        break
-
-                if hours_column_index != -1:
-                    worksheet.cell(row=total_row_idx, column=hours_column_index, value=total_hours)
-                    worksheet.cell(row=total_row_idx, column=hours_column_index).font = Font(bold=True)
-                    worksheet.cell(row=total_row_idx, column=hours_column_index).fill = PatternFill(start_color="E6F2FF", end_color="E6F2FF", fill_type="solid")
-
-
-                # Dodavanje statistike po kategorijama
-                if "Kategorija" in df.columns and "Sati" in df.columns and not df.empty:
-                    cat_stats = df.groupby("Kategorija")["Sati"].sum().reset_index()
-                    cat_stats = cat_stats.sort_values("Sati", ascending=False)
-
-                    cat_title_row = total_row_idx + 2
-                    worksheet.cell(row=cat_title_row, column=1, value="Statistika po kategorijama")
-                    worksheet.cell(row=cat_title_row, column=1).font = Font(bold=True, size=12)
-
-                    cat_header_row = cat_title_row + 1
-                    headers_cat = ["Kategorija", "Sati", "Procenat"]
-                    for col_idx, header_text in enumerate(headers_cat, 1):
-                        cell = worksheet.cell(row=cat_header_row, column=col_idx, value=header_text)
-                        cell.font = header_font
-                        cell.fill = header_fill
-                        cell.alignment = header_alignment
-
-                    current_row_for_cat_stats = cat_header_row + 1
-                    for _, row_data in cat_stats.iterrows():
-                        percentage = (row_data["Sati"] / total_hours * 100) if total_hours > 0 else 0
-                        worksheet.cell(row=current_row_for_cat_stats, column=1, value=row_data["Kategorija"])
-                        worksheet.cell(row=current_row_for_cat_stats, column=2, value=row_data["Sati"])
-                        worksheet.cell(row=current_row_for_cat_stats, column=3, value=f"{percentage:.1f}%")
-                        current_row_for_cat_stats += 1
-                else:
-                    current_row_for_cat_stats = total_row_idx + 1 # Ako nema statistike, postavi za sledeći deo
-
-
-                # Dodavanje statistike po korisnicima
-                if "Korisnik" in df.columns and "Sati" in df.columns and not df.empty:
-                    user_stats = df.groupby("Korisnik")["Sati"].sum().reset_index()
-                    user_stats = user_stats.sort_values("Sati", ascending=False)
-
-                    user_title_row = current_row_for_cat_stats + 1 # Nastavi ispod statistike kategorija
-                    worksheet.cell(row=user_title_row, column=1, value="Statistika po korisnicima")
-                    worksheet.cell(row=user_title_row, column=1).font = Font(bold=True, size=12)
-
-                    user_header_row = user_title_row + 1
-                    headers_user = ["Korisnik", "Sati", "Procenat"]
-                    for col_idx, header_text in enumerate(headers_user, 1):
-                        cell = worksheet.cell(row=user_header_row, column=col_idx, value=header_text)
-                        cell.font = header_font
-                        cell.fill = header_fill
-                        cell.alignment = header_alignment
-
-                    current_row_for_user_stats = user_header_row + 1
-                    for _, row_data in user_stats.iterrows():
-                        percentage = (row_data["Sati"] / total_hours * 100) if total_hours > 0 else 0
-                        worksheet.cell(row=current_row_for_user_stats, column=1, value=row_data["Korisnik"])
-                        worksheet.cell(row=current_row_for_user_stats, column=2, value=row_data["Sati"])
-                        worksheet.cell(row=current_row_for_user_stats, column=3, value=f"{percentage:.1f}%")
-                        current_row_for_user_stats +=1
-
-            messagebox.showinfo("Uspeh", "Izveštaj uspešno izvezen!")
+            export.write_task_report(file_path, data)
+            messagebox.showinfo("Uspeh", "Izvestaj uspesno izvezen!")
 
         except Exception as e:
-            messagebox.showerror("Greška", f"Greška pri izvozu u Excel: {str(e)}")
+            messagebox.showerror("Greska", f"Greska pri izvozu u Excel: {str(e)}")
             print(f"Error exporting to Excel: {str(e)}")
-                
-    # ... unutar klase TimeTracker ...
+
+    def export_statistics(self):
+        """Izvoz statistike (tab Stats) u Excel."""
+        try:
+            file_path = filedialog.asksaveasfilename(
+                defaultextension=".xlsx",
+                filetypes=[("Excel fajlovi", "*.xlsx"), ("Svi fajlovi", "*.*")]
+            )
+            if not file_path:
+                return
+
+            date_from = self.stats_date_from.get_date()
+            date_to = self.stats_date_to.get_date()
+            params = (date_from.strftime('%Y-%m-%d'), date_to.strftime('%Y-%m-%d'))
+
+            cursor = self.db.conn.cursor()
+
+            cursor.execute("""
+                SELECT categories.name, SUM(tasks.hours_spent) as total_hours
+                FROM tasks
+                JOIN categories ON tasks.category_id = categories.id
+                WHERE tasks.date BETWEEN ? AND ?
+                GROUP BY categories.name
+                ORDER BY total_hours DESC
+            """, params)
+            category_stats = cursor.fetchall()
+
+            cursor.execute("""
+                SELECT users.name, SUM(tasks.hours_spent) as total_hours
+                FROM tasks
+                LEFT JOIN users ON tasks.user_id = users.id
+                WHERE tasks.date BETWEEN ? AND ?
+                GROUP BY users.name
+                ORDER BY total_hours DESC
+            """, params)
+            user_stats = cursor.fetchall()
+
+            cursor.execute("""
+                SELECT tasks.date, categories.name, users.name, SUM(tasks.hours_spent) as total_hours
+                FROM tasks
+                JOIN categories ON tasks.category_id = categories.id
+                LEFT JOIN users ON tasks.user_id = users.id
+                WHERE tasks.date BETWEEN ? AND ?
+                GROUP BY tasks.date, categories.name, users.name
+                ORDER BY tasks.date DESC, total_hours DESC
+            """, params)
+            daily_stats = cursor.fetchall()
+
+            cursor.execute("""
+                SELECT tasks.date, users.name, categories.name, tasks.task_name,
+                       tasks.hours_spent, tasks.start_time, tasks.end_time, tasks.priority,
+                       tasks.description
+                FROM tasks
+                JOIN categories ON tasks.category_id = categories.id
+                LEFT JOIN users ON tasks.user_id = users.id
+                WHERE tasks.date BETWEEN ? AND ?
+                ORDER BY tasks.date DESC, tasks.start_time DESC
+            """, params)
+            details = cursor.fetchall()
+
+            export.write_statistics_report(file_path, category_stats, user_stats, daily_stats, details)
+            messagebox.showinfo("Uspeh", "Statistika uspesno izvezena!")
+
+        except Exception as e:
+            messagebox.showerror("Greska", f"Greska pri izvozu statistike: {str(e)}")
+            print(f"Error exporting statistics: {str(e)}")
 
     def refresh_future_tasks(self):
         """Osvežavanje liste budućih zadataka"""
@@ -2431,7 +1986,7 @@ class TimeTracker:
 
             query += " ORDER BY ft.date ASC, ft.priority DESC" # Možda drugačije sortiranje?
 
-            cursor = self.conn.cursor()
+            cursor = self.db.conn.cursor()
             cursor.execute(query, params)
             fetched_rows = cursor.fetchall()
 
@@ -2460,13 +2015,13 @@ class TimeTracker:
 
     def get_all_users(self):
         """Vraća listu svih korisnika"""
-        cursor = self.conn.cursor()
+        cursor = self.db.conn.cursor()
         cursor.execute("SELECT name FROM users ORDER BY name")
         return [row[0] for row in cursor.fetchall()]
 
     def get_all_categories(self):
             """Vraća listu svih kategorija"""
-            cursor = self.conn.cursor()
+            cursor = self.db.conn.cursor()
             cursor.execute("SELECT name FROM categories ORDER BY name")
             return [row[0] for row in cursor.fetchall()]
     
@@ -2497,7 +2052,7 @@ class TimeTracker:
         future_task_id_for_db = int(str(tags[1])) # Konvertuj u int za upit
 
         try:
-            cursor = self.conn.cursor()
+            cursor = self.db.conn.cursor()
             cursor.execute("""
                 SELECT ft.date, u.name, ft.task_name, c.name, ft.priority, ft.description, ft.completed
                 FROM future_tasks ft
@@ -2599,147 +2154,12 @@ class TimeTracker:
         # else:
             # print(f"Debug show_future_task_context_menu: Nije red sa zadatkom ili nema validan ID. Tags: {tags}")
 
-    def edit_future_task(self, event=None, item=None):
-        """Uređivanje budućeg zadatka"""
-        try:
-            # Ako je pozvano iz kontekstnog menija, item je već prosleđen
-            # Ako je pozvano dvoklikom, potrebno je dobiti selektovani item
-            if event and not item:
-                item = self.future_tree.identify_row(event.y)
-                if not item:
-                    return
-
-                # Selektovanje reda
-                self.future_tree.selection_set(item)
-
-            # Dobijanje ID-a zadatka iz tag-a
-            task_id = self.future_tree.item(item, "tags")[0]
-            description = self.future_tree.item(item, "tags")[1]
-
-            # Dobijanje podataka o zadatku
-            cursor = self.conn.cursor()
-            cursor.execute("""
-                SELECT ft.date, u.name, ft.task_name, c.name, ft.priority, ft.completed
-                FROM future_tasks ft
-                LEFT JOIN users u ON ft.user_id = u.id
-                JOIN categories c ON ft.category_id = c.id
-                WHERE ft.id = ?
-            """, (task_id,))
-            task = cursor.fetchone()
-
-            if not task:
-                messagebox.showerror("Greška", "Zadatak nije pronađen.")
-                return
-
-            date, user, task_name, category, priority, completed = task
-
-            # Kreiranje dijaloga za uređivanje
-            edit_dialog = tk.Toplevel(self.root)
-            edit_dialog.title("Uredi budući zadatak")
-            edit_dialog.geometry("400x350")
-            edit_dialog.resizable(False, False)
-            edit_dialog.transient(self.root)
-            edit_dialog.grab_set()
-
-            # Dodavanje polja za uređivanje
-            tk.Label(edit_dialog, text="Datum:").grid(row=0, column=0, padx=5, pady=5, sticky=tk.W)
-            date_entry = DateEntry(edit_dialog, width=12, background='darkblue',
-                                foreground='white', borderwidth=2, date_pattern='dd.MM.yyyy')
-            date_entry.grid(row=0, column=1, padx=5, pady=5, sticky=tk.W)
-            date_entry.set_date(datetime.strptime(date, '%Y-%m-%d').date())
-
-            tk.Label(edit_dialog, text="Korisnik:").grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
-            user_combo = ttk.Combobox(edit_dialog, width=15)
-            user_combo['values'] = self.get_all_users()
-            user_combo.grid(row=1, column=1, padx=5, pady=5, sticky=tk.W)
-            user_combo.set(user)
-
-            tk.Label(edit_dialog, text="Zadatak:").grid(row=2, column=0, padx=5, pady=5, sticky=tk.W)
-            task_entry = tk.Entry(edit_dialog, width=30)
-            task_entry.grid(row=2, column=1, padx=5, pady=5, sticky=tk.W)
-            task_entry.insert(0, task_name)
-
-            tk.Label(edit_dialog, text="Kategorija:").grid(row=3, column=0, padx=5, pady=5, sticky=tk.W)
-            category_combo = ttk.Combobox(edit_dialog, width=15)
-            category_combo['values'] = self.get_all_categories()
-            category_combo.grid(row=3, column=1, padx=5, pady=5, sticky=tk.W)
-            category_combo.set(category)
-
-            tk.Label(edit_dialog, text="Prioritet:").grid(row=4, column=0, padx=5, pady=5, sticky=tk.W)
-            priority_combo = ttk.Combobox(edit_dialog, width=15)
-            priority_combo['values'] = ["Nizak", "Srednji", "Visok"]
-            priority_combo.grid(row=4, column=1, padx=5, pady=5, sticky=tk.W)
-            priority_combo.set(priority)
-
-            tk.Label(edit_dialog, text="Opis:").grid(row=5, column=0, padx=5, pady=5, sticky=tk.W)
-            description_text = tk.Text(edit_dialog, width=30, height=5)
-            description_text.grid(row=5, column=1, padx=5, pady=5, sticky=tk.W)
-            description_text.insert(tk.END, description)
-
-            completed_var = tk.BooleanVar(value=bool(completed))
-            completed_check = tk.Checkbutton(edit_dialog, text="Završen", variable=completed_var)
-            completed_check.grid(row=6, column=1, padx=5, pady=5, sticky=tk.W)
-
-            # Dugmad za potvrdu i odustajanje
-            def save_changes():
-                try:
-                    # Dobijanje ID-a korisnika i kategorije
-                    cursor.execute("SELECT id FROM users WHERE name = ?", (user_combo.get(),))
-                    user_id = cursor.fetchone()[0]
-
-                    cursor.execute("SELECT id FROM categories WHERE name = ?", (category_combo.get(),))
-                    category_id = cursor.fetchone()[0]
-
-                    # Ažuriranje zadatka
-                    cursor.execute("""
-                        UPDATE future_tasks
-                        SET date = ?, user_id = ?, task_name = ?, category_id = ?,
-                            priority = ?, completed = ?, description = ?
-                        WHERE id = ?
-                    """, (
-                        date_entry.get_date().strftime('%Y-%m-%d'),
-                        user_id,
-                        task_entry.get(),
-                        category_id,
-                        priority_combo.get(),
-                        1 if completed_var.get() else 0,
-                        description_text.get("1.0", tk.END).strip(),
-                        task_id
-                    ))
-
-                    self.conn.commit()
-                    messagebox.showinfo("Uspeh", "Zadatak je uspešno ažuriran.")
-                    edit_dialog.destroy()
-
-                    # Osvežavanje liste budućih zadataka
-                    self.refresh_future_tasks()
-                except Exception as e:
-                    messagebox.showerror("Greška", f"Došlo je do greške: {str(e)}")
-
-            tk.Button(edit_dialog, text="Sačuvaj", command=save_changes).grid(row=7, column=0, padx=5, pady=10)
-            tk.Button(edit_dialog, text="Odustani", command=edit_dialog.destroy).grid(row=7, column=1, padx=5, pady=10)
-        except Exception as e:
-            messagebox.showerror("Greška", f"Došlo je do greške: {str(e)}")
-
     def show_future_task_details_from_item(self, item_id):
         if not item_id:
             return
         self.future_tree.selection_set(item_id) # Postavi selekciju
         self.show_future_task_details(event=None) # Pozovi originalnu metodu
         
-    def delete_future_task(self, task_id):
-        """Brisanje budućeg zadatka"""
-        try:
-            if messagebox.askyesno("Potvrda", "Da li ste sigurni da želite da obrišete ovaj zadatak?"):
-                cursor = self.conn.cursor()
-                cursor.execute("DELETE FROM future_tasks WHERE id = ?", (task_id,))
-                self.conn.commit()
-                messagebox.showinfo("Uspeh", "Zadatak je uspešno obrisan.")
-
-                # Osvežavanje liste budućih zadataka
-                self.refresh_future_tasks()
-        except Exception as e:
-            messagebox.showerror("Greška", f"Došlo je do greške: {str(e)}")
 
     def mark_future_task_completed(self, future_task_id_str):
         """Obeležava budući zadatak kao završen (briše ga iz liste)."""
@@ -2747,142 +2167,15 @@ class TimeTracker:
             return
         try:
             future_task_id = int(future_task_id_str)
-            cursor = self.conn.cursor()
+            cursor = self.db.conn.cursor()
             cursor.execute("DELETE FROM future_tasks WHERE id = ?", (future_task_id,))
-            self.conn.commit()
+            self.db.conn.commit()
             messagebox.showinfo("Uspeh", "Budući zadatak je označen kao završen i uklonjen.")
             self.refresh_future_tasks()
         except ValueError:
             messagebox.showerror("Greška", "Nevažeći ID zadatka.")
         except Exception as e:
             messagebox.showerror("Greška", f"Greška pri označavanju zadatka kao završenog: {str(e)}")
-
-    def move_to_active_tasks(self, task_id):
-        """Prebacivanje budućeg zadatka u aktivne zadatke"""
-        try:
-            # Dobijanje podataka o zadatku, uključujući prioritet
-            cursor = self.conn.cursor()
-            cursor.execute("""
-                SELECT ft.date, ft.user_id, ft.task_name, ft.category_id, ft.description, ft.priority
-                FROM future_tasks ft
-                WHERE ft.id = ?
-            """, (task_id,))
-            task_data = cursor.fetchone() # Preimenovano iz task u task_data da se izbegne konfuzija
-
-            if not task_data:
-                messagebox.showerror("Greška", "Zadatak nije pronađen.")
-                return
-
-            # Raspakivanje podataka
-            # original_date, user_id, task_name, category_id, description, priority = task_data
-            # Koristićemo današnji datum za aktivni task, a ne originalni planirani datum
-            _, user_id, task_name, category_id, description, priority = task_data
-
-
-            # Dodavanje u aktivne zadatke
-            today = datetime.now().strftime('%Y-%m-%d')
-            current_time = datetime.now().strftime('%H:%M')
-
-            cursor.execute("""
-                INSERT INTO tasks (date, user_id, category_id, task_name, description,
-                                hours_spent, start_time, end_time, priority)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                today,
-                user_id,
-                category_id, # Dodata category_id koja je falila u originalnom upitu
-                task_name,
-                description,
-                0,  # hours_spent je 0 jer rad tek počinje
-                current_time, # Može biti trenutno vreme ili prazno
-                current_time, # Može biti trenutno vreme ili prazno, ili ostaviti prazno
-                priority      # Dodat prioritet
-            ))
-
-            # Brisanje iz budućih zadataka
-            cursor.execute("DELETE FROM future_tasks WHERE id = ?", (task_id,))
-
-            self.conn.commit()
-            messagebox.showinfo("Uspeh", "Zadatak je prebačen u aktivne zadatke.")
-
-            # Osvežavanje liste budućih zadataka i aktivnih zadataka (izveštaja)
-            self.refresh_future_tasks()
-            self.refresh_report()  # Ažuriranje prikaza aktivnih zadataka
-            self.update_status_bar() # Ažuriranje statusne trake
-
-        except Exception as e:
-            messagebox.showerror("Greška", f"Došlo je do greške prilikom prebacivanja zadatka: {str(e)}")
-            print(f"Error moving task to active: {str(e)}")     
-        
-    def start_working_on_task(self, task_id=None):
-        """Započinjanje rada na budućem zadatku"""
-        if not task_id:
-            selection = self.future_tree.selection()
-            if not selection:
-                messagebox.showinfo("Informacija", "Molimo izaberite zadatak")
-                return
-
-            item = selection[0]
-            task_id = self.future_tree.item(item)['tags'][0]
-
-        # Dobijanje podataka o zadatku
-        cursor = self.conn.cursor()
-        cursor.execute("""
-            SELECT ft.date, u.name, c.name, ft.task_name, ft.description, ft.priority
-            FROM future_tasks ft
-            LEFT JOIN users u ON ft.user_id = u.id
-            JOIN categories c ON ft.category_id = c.id
-            WHERE ft.id = ?
-        """, (task_id,))
-
-        task = cursor.fetchone()
-        if not task:
-            messagebox.showerror("Greška", "Zadatak nije pronađen")
-            return
-
-        date, user, category, task_name, description, priority = task
-
-        # Postavljanje vrednosti u formu za unos
-        self.date_entry.set_date(datetime.strptime(date, '%Y-%m-%d'))
-        self.user_entry.set(user)
-        self.category_combo.set(category)
-        self.task_entry.set(task_name)
-        self.desc_text.delete("1.0", tk.END)
-        self.desc_text.insert("1.0", description or "")
-        self.priority_combo.set(priority)
-
-        # Postavljanje fokusa na početno vreme
-        self.start_time_entry.focus_set()
-
-        # Prebacivanje na karticu za unos zadataka
-        self.notebook.select(0)
-
-        # Pitanje da li da obrišemo budući zadatak
-        if messagebox.askyesno("Pitanje", "Da li želite da uklonite ovaj zadatak iz liste budućih zadataka?"):
-            cursor.execute("DELETE FROM future_tasks WHERE id = ?", (task_id,))
-            self.conn.commit()
-            self.refresh_future_tasks()
-        pass  # Dodajte kod iz prethodnog odgovora
-
-    def mark_task_completed(self, task_id=None):
-        if not task_id:
-            selection = self.future_tree.selection()
-            if not selection:
-                messagebox.showinfo("Informacija", "Molimo izaberite zadatak")
-                return
-
-            item = selection[0]
-            task_id = self.future_tree.item(item)['tags'][0]
-
-        # Ažuriranje statusa zadatka
-        cursor = self.conn.cursor()
-        cursor.execute("UPDATE future_tasks SET completed = 1 WHERE id = ?", (task_id,))
-        self.conn.commit()
-
-        # Osvežavanje liste
-        self.refresh_future_tasks()
-        messagebox.showinfo("Uspeh", "Zadatak je označen kao završen")
-        pass  # Dodajte kod iz prethodnog odgovora
 
     def delete_future_task(self, task_id=None):
         """Brisanje budućeg zadatka"""
@@ -2900,78 +2193,24 @@ class TimeTracker:
             return
 
         # Brisanje zadatka
-        cursor = self.conn.cursor()
+        cursor = self.db.conn.cursor()
         cursor.execute("DELETE FROM future_tasks WHERE id = ?", (task_id,))
-        self.conn.commit()
+        self.db.conn.commit()
 
         # Osvežavanje liste
         self.refresh_future_tasks()
         messagebox.showinfo("Uspeh", "Zadatak je uspešno obrisan")
         pass  # Dodajte kod iz prethodnog odgovora
     
+
     def run(self):
-        """Pokretanje aplikacije"""
+        """Pokretanje glavne petlje aplikacije."""
         try:
-            # Postavljanje lokalizacije
-            try:
-                locale.setlocale(locale.LC_ALL, 'sr_RS.UTF-8')
-            except locale.Error:
-                try:
-                    locale.setlocale(locale.LC_ALL, 'serbian')
-                except locale.Error:
-                    print("Srpska lokalizacija nije dostupna, koristi se podrazumevana")
-
-            # Postavljanje početnih vrednosti filtera za report tab (ako je potrebno)
             today = datetime.now().date()
-            self.date_from.set_date(today - timedelta(days=2)) # Ovo je za report tab
-            self.date_to.set_date(today) # Ovo je za report tab
+            self.date_from.set_date(today - timedelta(days=2))
+            self.date_to.set_date(today)
 
-            # UKLONITE ILI KOMENTARIŠITE SLEDEĆI DEO:
-            # # Kreiranje frame-a za filtere budućih zadataka
-            # self.filter_date_frame = tk.Frame(self.root)
-            # self.filter_date_frame.pack(pady=5)
-
-            # # Dodavanje labela i widgeta za filtere budućih zadataka
-            # tk.Label(self.filter_date_frame, text="Od:").pack(side=tk.LEFT, padx=5)
-
-            # # Inicijalizacija DateEntry widgeta za buduće zadatke
-            # self.future_date_from = DateEntry(self.filter_date_frame, width=12, background='darkblue',
-            #                                 foreground='white', borderwidth=2, date_pattern='dd.MM.yyyy')
-            # self.future_date_from.set_date(self.future_date_from_value)
-            # self.future_date_from.pack(side=tk.LEFT, padx=5)
-
-            # tk.Label(self.filter_date_frame, text="Do:").pack(side=tk.LEFT, padx=5)
-
-            # self.future_date_to = DateEntry(self.filter_date_frame, width=12, background='darkblue',
-            #                             foreground='white', borderwidth=2, date_pattern='dd.MM.yyyy')
-            # self.future_date_to.set_date(self.future_date_to_value)
-            # self.future_date_to.pack(side=tk.LEFT, padx=5)
-
-            # # Inicijalizacija filtera za korisnike i kategorije
-            # tk.Label(self.filter_date_frame, text="Korisnik:").pack(side=tk.LEFT, padx=5)
-            # self.future_user_filter = ttk.Combobox(self.filter_date_frame, width=15)
-            # self.future_user_filter['values'] = ['Svi'] + self.get_all_users()
-            # self.future_user_filter.current(0)
-            # self.future_user_filter.pack(side=tk.LEFT, padx=5)
-
-            # tk.Label(self.filter_date_frame, text="Kategorija:").pack(side=tk.LEFT, padx=5)
-            # self.future_category_filter = ttk.Combobox(self.filter_date_frame, width=15)
-            # self.future_category_filter['values'] = ['Sve'] + self.get_all_categories()
-            # self.future_category_filter.current(0)
-            # self.future_category_filter.pack(side=tk.LEFT, padx=5)
-
-            # # Dugme za osvežavanje
-            # tk.Button(self.filter_date_frame, text="Osveži", command=self.refresh_future_tasks).pack(side=tk.LEFT, padx=5)
-            # KRAJ DELA ZA UKLANJANJE/KOMENTARISANJE
-
-            # Osvežavanje liste budućih zadataka
-            self.refresh_future_tasks() # Ovaj poziv je sada u redu
-
-            # Pokretanje glavne petlje
+            self.refresh_future_tasks()
             self.root.mainloop()
         except Exception as e:
             messagebox.showerror("Kritična greška", f"Došlo je do kritične greške: {str(e)}")
-        
-if __name__ == "__main__":
-    app = TimeTracker()
-    app.run()
