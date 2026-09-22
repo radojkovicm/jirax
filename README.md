@@ -1,34 +1,34 @@
 # JiraX — Time Tracker
 
-JiraX je desktop aplikacija za praćenje radnog vremena namenjena malim IT/support timovima i pojedincima koji žele brzo da beleže na čemu su radili, koliko sati su utrošili i za kog klijenta ili kategoriju — bez potrebe za nalogom, internetom ili eksternim alatom poput Jire.
+JiraX is a desktop time-tracking app for small IT/support teams and individuals who want to quickly log what they worked on, how many hours it took, and for which client or category — no account, no internet connection, and no external tool like Jira required.
 
-![Unos zadatka](screenshots/01_unos_zadatka.png)
+![New Task](screenshots/01_new_task.png)
 
-## Zašto JiraX
+## Why JiraX
 
-- **Lokalno i privatno** — svi podaci se čuvaju u jednom SQLite fajlu na vašem računaru, ništa se ne šalje na server.
-- **Brz unos** — datum, korisnik, kategorija, početak/kraj vremena ili direktan unos broja sati, uz auto-predloge na osnovu prethodnih zadataka.
-- **Izveštaji i statistika** — pregled po danu, korisniku i kategoriji, sa izvozom u formatiran Excel fajl (`Reports` i `Stats` tabovi).
-- **Planiranje** — poseban tab za buduće/planirane zadatke, koje kasnije jednim klikom prebacujete u aktivne.
-- **Predlošci** — čuvanje čestih zadataka kao predložak za brži ponovni unos.
+- **Local and private** — all data is stored in a single SQLite file on your machine; nothing is sent to a server.
+- **Fast entry** — date, user, category, start/end time or a direct hours entry, with auto-suggestions based on previous tasks.
+- **Reports and statistics** — breakdowns by day, user and category, with export to a formatted Excel file (`Reports` and `Stats` tabs).
+- **Planning** — a dedicated tab for future/planned tasks, which you can move into active tasks with one click.
+- **Templates** — save frequently used tasks as templates for faster re-entry.
 
-## Ko treba da koristi ovaj alat
+## Who this is for
 
-IT podrška, freelanceri, konsultanti i manji timovi koji vode dnevnu evidenciju rada po klijentima/kategorijama i povremeno moraju da izvezu izveštaj (npr. za fakturisanje ili internu statistiku), a ne žele da plaćaju ili konfigurišu pun projekt-menadžment alat.
+IT support staff, freelancers, consultants and small teams who track daily work by client/category and occasionally need to export a report (e.g. for invoicing or internal stats), without wanting to configure a full project-management tool.
 
-## Screenshotovi
+## Screenshots
 
-| Unos zadatka | Reports |
+| New Task | Reports |
 |---|---|
-| ![Unos zadatka](screenshots/01_unos_zadatka.png) | ![Reports](screenshots/02_reports.png) |
+| ![New Task](screenshots/01_new_task.png) | ![Reports](screenshots/02_reports.png) |
 
-| Stats | Budući zadaci |
+| Stats | Future Tasks |
 |---|---|
-| ![Stats](screenshots/03_stats.png) | ![Budući zadaci](screenshots/04_buduci_zadaci.png) |
+| ![Stats](screenshots/03_stats.png) | ![Future Tasks](screenshots/04_future_tasks.png) |
 
-## Instalacija i pokretanje
+## Installation and usage
 
-Potreban je Python 3.10+.
+Requires Python 3.10+.
 
 ```bash
 git clone https://github.com/radojkovicm/jirax.git
@@ -37,32 +37,32 @@ pip install -r requirements.txt
 python main.py
 ```
 
-Baza podataka (`time_tracker.db`) i njena šema se automatski kreiraju pri prvom pokretanju, u istom folderu — nema ručnog podešavanja.
+The database (`time_tracker.db`) and its schema are created automatically on first run, in the same folder — no manual setup needed.
 
-## Build (samostalan .exe za Windows)
+## Build (standalone Windows .exe)
 
-Projekat sadrži `TimeTrackerApp.spec` za [PyInstaller](https://pyinstaller.org/):
+The project includes `TimeTrackerApp.spec` for [PyInstaller](https://pyinstaller.org/):
 
 ```bash
 pip install pyinstaller
 pyinstaller TimeTrackerApp.spec
 ```
 
-Gotov `.exe` će se naći u `dist/TimeTrackerApp/`.
+The finished `.exe` will be in `dist/TimeTrackerApp/`.
 
-## Struktura projekta
+## Project structure
 
 ```
-main.py        - ulazna tačka aplikacije
-database.py    - SQLite šema i konekcija
-gui.py         - Tkinter korisnički interfejs (unos, izveštaji, statistika, budući zadaci)
-export.py      - izvoz izveštaja/statistike u formatiran Excel
+main.py        - application entry point
+database.py    - SQLite schema and connection
+gui.py         - Tkinter UI (task entry, reports, stats, future tasks)
+export.py      - formatted Excel export for reports/statistics
 ```
 
-## Napomena o podacima
+## Notes on data
 
-Podrazumevane kategorije se kreiraju automatski pri prvom pokretanju; lista korisnika kreće prazna i puni se sama čim prvi put upišete ime u polje "Korisnik". `time_tracker.db` nije deo repozitorijuma (vidi `.gitignore`) jer sadrži lične/poslovne podatke — svaka instalacija ima svoju lokalnu bazu.
+Default categories are created automatically on first run; the user list starts empty and fills in as soon as you type a name into the "User" field. `time_tracker.db` is not part of the repository (see `.gitignore`) since it holds personal/business data — each installation keeps its own local database.
 
-## Licenca
+## License
 
 [MIT](LICENSE)
